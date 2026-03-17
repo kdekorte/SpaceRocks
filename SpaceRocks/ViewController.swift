@@ -24,6 +24,7 @@ class ViewController: NSViewController {
             if let sceneNode = scene.rootNode as! GameScene? {
                 
                 // Copy gameplay related content over to the scene
+                // FIXME - why did AI do this?
                // sceneNode.entities = scene.entities
                // sceneNode.graphs = scene.graphs
                 
