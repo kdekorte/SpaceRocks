@@ -106,6 +106,10 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         highScore = UserDefaults.standard.integer(forKey: highScoreKey)
         createHUD()
         showTitle()
+        
+        print("didMove: scene loaded, state=\(state)")
+        // Ensure key events go to the scene, reducing menu handling
+        self.view?.window?.makeFirstResponder(self)
     }
 
     // MARK: - Setup
@@ -239,6 +243,16 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         node.addChild(emitter)
         emitter.particleBirthRate = 0
         thrustEmitter = emitter
+        // TEMP: Force thrust visible briefly to verify rendering
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.thrustEmitter?.particleSpeed = 0
+            self.thrustEmitter?.particleBirthRate = 800
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self.thrustEmitter?.particleBirthRate = 0
+                self.thrustEmitter?.particleSpeed = 120
+            }
+        }
         
         // Shield ring (initially hidden)
         let ring = SKShapeNode(circleOfRadius: shipSize + 6)
@@ -249,6 +263,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         ring.glowWidth = 6
         node.addChild(ring)
         shieldNode = ring
+        
+        print("createShip: ship created at \(ship.position)")
+        if let te = thrustEmitter {
+            print("createShip: thrustEmitter attached at local position \(te.position), birthRate=\(te.particleBirthRate)")
+        } else {
+            print("createShip: thrustEmitter is nil")
+        }
     }
 
     private func spawnWave() {
@@ -258,7 +279,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         }
     }
 
-    private enum AsteroidSize { case large, medium, small }
+    private enum AsteroidSize: String { case large, medium, small }
 
     private func spawnAsteroid(size: AsteroidSize, position: CGPoint? = nil, velocity: CGVector? = nil) {
         let radius: CGFloat
@@ -281,6 +302,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         let asteroid = SKShapeNode(path: path)
         asteroid.strokeColor = .white
         asteroid.lineWidth = 2
+
+        // Tag with size and alive flag to make collision handling robust
+        asteroid.name = "asteroid"
+        var data = asteroid.userData ?? NSMutableDictionary()
+        data["size"] = size.rawValue
+        data["alive"] = true
+        asteroid.userData = data
 
         let spawnPos: CGPoint
         if let position = position {
@@ -634,6 +662,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
 
         // Thrust
         if thrusting {
+            print("update: thrusting -> enabling thrust particles")
             let thrust: CGFloat = 180
             let add = forwardVector() * (thrust * CGFloat(dt))
             if let v = ship.physicsBody?.velocity {
@@ -645,7 +674,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 isThrustSoundPlaying = true
                 run(thrustSound) { [weak self] in self?.isThrustSoundPlaying = false }
             }
-            thrustEmitter?.particleBirthRate = 140
+            thrustEmitter?.particleBirthRate = 400
         } else {
             isThrustSoundPlaying = false
             thrustEmitter?.particleBirthRate = 0
@@ -675,41 +704,129 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     func didBegin(_ contact: SKPhysicsContact) {
         let a = contact.bodyA.categoryBitMask
         let b = contact.bodyB.categoryBitMask
+        
+        print("didBegin: contact categories a=\(a) b=\(b)")
 
         if (a == PhysicsCategory.bullet && b == PhysicsCategory.asteroid) ||
             (b == PhysicsCategory.bullet && a == PhysicsCategory.asteroid) {
-            if let bulletNode = (contact.bodyA.categoryBitMask == PhysicsCategory.bullet ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode,
-               let asteroidNode = (contact.bodyA.categoryBitMask == PhysicsCategory.asteroid ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode {
+            let bulletNode = (contact.bodyA.categoryBitMask == PhysicsCategory.bullet ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode
+            let asteroidNode = (contact.bodyA.categoryBitMask == PhysicsCategory.asteroid ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode
+            if let bulletNode, let asteroidNode {
                 bulletHit(bullet: bulletNode, asteroid: asteroidNode)
             }
         }
 
         if (a == PhysicsCategory.ship && b == PhysicsCategory.asteroid) ||
             (b == PhysicsCategory.ship && a == PhysicsCategory.asteroid) {
-            if !shieldActive { shipHit() }
+            if shieldActive {
+                // Bounce asteroid off the shield by reflecting its velocity away from the ship
+                let asteroidBody = (contact.bodyA.categoryBitMask == PhysicsCategory.asteroid ? contact.bodyA : contact.bodyB)
+                guard let asteroidNode = asteroidBody.node as? SKShapeNode,
+                      let body = asteroidNode.physicsBody,
+                      let shipNode = ship
+                else { return }
+
+                // Normal from ship to asteroid
+                let dx = asteroidNode.position.x - shipNode.position.x
+                let dy = asteroidNode.position.y - shipNode.position.y
+                var n = CGVector(dx: dx, dy: dy)
+                let len = max(0.001, sqrt(n.dx*n.dx + n.dy*n.dy))
+                n.dx /= len; n.dy /= len
+
+                // Reflect velocity: v' = v - 2*(v·n)*n
+                let v = body.velocity
+                let dot = v.dx * n.dx + v.dy * n.dy
+                var reflected = CGVector(dx: v.dx - 2 * dot * n.dx, dy: v.dy - 2 * dot * n.dy)
+
+                // Add a small outward impulse to ensure separation
+                let boost: CGFloat = 40
+                reflected.dx += n.dx * boost
+                reflected.dy += n.dy * boost
+
+                // Clamp to a reasonable speed range to feel snappy
+                let speed = sqrt(reflected.dx*reflected.dx + reflected.dy*reflected.dy)
+                let minSpeed: CGFloat = 60
+                let maxSpeed: CGFloat = 160
+                var scale: CGFloat = 1.0
+                if speed < minSpeed { scale = minSpeed / max(speed, 0.001) }
+                else if speed > maxSpeed { scale = maxSpeed / speed }
+                reflected.dx *= scale; reflected.dy *= scale
+                body.velocity = reflected
+
+                // Nudge asteroid just outside the shield ring to avoid repeated contacts
+                let shieldRadius: CGFloat = 16 + 6 // shipSize + ring offset from createShip()
+                let safeOffset: CGFloat = shieldRadius + 6
+                asteroidNode.position = CGPoint(x: shipNode.position.x + n.dx * safeOffset,
+                                                y: shipNode.position.y + n.dy * safeOffset)
+                
+                // Drain 5% shield power on bounce and update HUD; if depleted, trigger cooldown visuals
+                shieldPower = max(0, shieldPower - 5)
+                updateShieldMeter()
+                if shieldPower == 0 {
+                    shieldActive = false
+                    shieldCooldown = true
+                    shieldCooldownTimer = shieldCooldownDuration
+                    updateShieldCooldownHUD()
+                    let flicker = SKAction.sequence([
+                        .fadeAlpha(to: 0.2, duration: 0.05),
+                        .fadeAlpha(to: 0.9, duration: 0.05),
+                        .fadeAlpha(to: 0.2, duration: 0.05),
+                        .fadeAlpha(to: 0.0, duration: 0.1)
+                    ])
+                    let reduceGlow = SKAction.customAction(withDuration: 0.2) { node, _ in
+                        (node as? SKShapeNode)?.glowWidth = 6
+                    }
+                    shieldNode?.run(.sequence([flicker, reduceGlow]))
+                    run(shieldOffSound)
+                }
+            } else {
+                shipHit()
+            }
         }
     }
 
     private func bulletHit(bullet: SKShapeNode, asteroid: SKShapeNode) {
+        // Remove bullet immediately to avoid multiple contacts
         bullet.removeFromParent()
         bullets.removeAll { $0 == bullet }
 
-        // Determine size by approximate radius
-        let approxRadius = max(asteroid.frame.width, asteroid.frame.height) * 0.5
+        // Guard: ensure asteroid is not already processed
+        let data = asteroid.userData ?? NSMutableDictionary()
+        if let alive = data["alive"] as? Bool, alive == false { return }
+        data["alive"] = false
+        asteroid.userData = data
+
+        // Immediately disable asteroid physics to stop further contacts this frame
+        asteroid.physicsBody?.categoryBitMask = PhysicsCategory.none
+        asteroid.physicsBody?.contactTestBitMask = PhysicsCategory.none
+        asteroid.physicsBody?.collisionBitMask = PhysicsCategory.none
+
+        // Determine size from explicit tag (fallback to radius thresholds if missing)
+        let sizeTag: AsteroidSize = {
+            if let raw = data["size"] as? String, let s = AsteroidSize(rawValue: raw) { return s }
+            let approxRadius = max(asteroid.frame.width, asteroid.frame.height) * 0.5
+            if approxRadius > 30 { return .large }
+            else if approxRadius > 18 { return .medium }
+            else { return .small }
+        }()
+
+        // Remove asteroid node now
         asteroid.removeFromParent()
         asteroids.removeAll { $0 == asteroid }
 
-        if approxRadius > 30 { // large -> 2 medium
+        switch sizeTag {
+        case .large:
             for _ in 0..<2 {
                 spawnAsteroid(size: .medium, position: asteroid.position, velocity: randomSplitVelocity())
             }
             score += 10
-        } else if approxRadius > 18 { // medium -> 2 small
+        case .medium:
             for _ in 0..<2 {
                 spawnAsteroid(size: .small, position: asteroid.position, velocity: randomSplitVelocity())
             }
             score += 25
-        } else { // small destroyed
+        case .small:
+            // Terminal case: do not split small asteroids
             score += 100
         }
     }
@@ -820,23 +937,47 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     
     private func makeThrustEmitter() -> SKEmitterNode {
         let emitter = SKEmitterNode()
-        emitter.particleTexture = nil
+        emitter.particleTexture = makeHalfCircleTexture(radius: 10, color: .red)
         emitter.particleBirthRate = 140
-        emitter.particleLifetime = 0.25
-        emitter.particleLifetimeRange = 0.1
-        emitter.particleSpeed = 140
-        emitter.particleSpeedRange = 50
-        emitter.emissionAngleRange = .pi / 8
+        emitter.particleLifetime = 0.6
+        emitter.particleLifetimeRange = 0.15
+        emitter.particleSpeed = 120
+        emitter.particleSpeedRange = 40
+        // Emit straight backward relative to the ship
+        emitter.emissionAngle = .pi
+        emitter.emissionAngleRange = .pi / 12
         emitter.particleAlpha = 1.0
-        emitter.particleAlphaSpeed = -2.2
-        emitter.particleScale = 0.9
-        emitter.particleScaleRange = 0.3
-        // Red/orange thrust
-        emitter.particleColor = .red
+        emitter.particleAlphaSpeed = -1.0
+        emitter.particleScale = 2.0
+        emitter.particleScaleRange = 0.4
+        emitter.particleScaleSpeed = -1.0
         emitter.particleColorBlendFactor = 1.0
-        emitter.particleColorSequence = SKKeyframeSequence(keyframeValues: [NSColor.red, NSColor.orange, NSColor.yellow], times: [0, 0.5, 1])
-        emitter.zPosition = -1
+        emitter.particlePositionRange = CGVector(dx: 2, dy: 2)
+        emitter.zPosition = 2
         return emitter
+    }
+    
+    private func makeHalfCircleTexture(radius: CGFloat, color: NSColor) -> SKTexture {
+        // Build a semicircle shape node and render it directly to a texture
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addArc(center: CGPoint(x: radius, y: 0), radius: radius, startAngle: .pi, endAngle: 0, clockwise: false)
+        path.closeSubpath()
+
+        let shape = SKShapeNode(path: path)
+        shape.fillColor = color
+        shape.strokeColor = .clear
+        shape.lineWidth = 0
+
+        let view = SKView(frame: CGRect(x: 0, y: 0, width: radius * 2, height: radius))
+        guard let texture = view.texture(from: shape) else {
+            // Fallback: create a simple circle texture if anything goes wrong
+            let circle = SKShapeNode(circleOfRadius: radius)
+            circle.fillColor = color
+            circle.strokeColor = .clear
+            return SKView().texture(from: circle) ?? SKTexture()
+        }
+        return texture
     }
     
     private func makeBulletTrail() -> SKEmitterNode {
@@ -865,4 +1006,5 @@ private extension CGVector {
     static func + (lhs: CGVector, rhs: CGVector) -> CGVector { CGVector(dx: lhs.dx + rhs.dx, dy: lhs.dy + rhs.dy) }
     static func * (v: CGVector, s: CGFloat) -> CGVector { CGVector(dx: v.dx * s, dy: v.dy * s) }
 }
+
 
