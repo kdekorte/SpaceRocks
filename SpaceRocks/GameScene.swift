@@ -980,6 +980,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         let dt = currentTime - lastUpdateTime
         lastUpdateTime = currentTime
 
+        if state == .title || state == .gameOver {
+            if inputManager.isFiring {
+                run(fireSound)
+                startGame()
+            }
+        }
+        
         guard state == .playing else { return }
         
         shieldTimer += dt
