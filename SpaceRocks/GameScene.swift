@@ -19,6 +19,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private var lastUpdateTime: TimeInterval = 0
     private var ship: SKShapeNode!
+    private var engineGlow: SKShapeNode!
+    private var thrustFlame: SKShapeNode!
     private var thrusting = false
     private var turningLeft = false
     private var turningRight = false
@@ -81,8 +83,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 highScore = score
                 UserDefaults.standard.set(highScore, forKey: highScoreKey)
             }
-            // Extra life at 10,000 increments
-            if score >= nextExtraLifeScore {
+            // Extra life at 10,000 increments, max 9 lives
+            if score >= nextExtraLifeScore && lives < 9 {
                 lives += 1
                 updateLivesLabel()
                 nextExtraLifeScore += 10000
@@ -288,8 +290,9 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         let path = CGMutablePath()
         let shipSize: CGFloat = 16
         path.move(to: CGPoint(x: shipSize, y: 0))
-        path.addLine(to: CGPoint(x: -shipSize * 0.6, y: shipSize * 0.6))
-        path.addLine(to: CGPoint(x: -shipSize * 0.6, y: -shipSize * 0.6))
+        path.addLine(to: CGPoint(x: -shipSize * 0.7, y: shipSize * 0.5))
+        path.addLine(to: CGPoint(x: -shipSize * 0.4, y: 0)) // inner notch
+        path.addLine(to: CGPoint(x: -shipSize * 0.7, y: -shipSize * 0.5))
         path.closeSubpath()
 
         let node = SKShapeNode(path: path)
@@ -307,6 +310,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         node.physicsBody?.contactTestBitMask = PhysicsCategory.asteroid
         node.physicsBody?.collisionBitMask = PhysicsCategory.none
 
+        // add glow
+        engineGlow = createEngineGlow()
+        node.addChild(engineGlow)
+        
+        thrustFlame = createThrustFlame()
+        node.addChild(thrustFlame)
+        
         addChild(node)
         ship = node
         
@@ -346,6 +356,62 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         }
     }
 
+    func createEngineGlow() -> SKShapeNode {
+        let glowPath = CGMutablePath()
+        glowPath.move(to: CGPoint(x: -10, y: -6))
+        glowPath.addLine(to: CGPoint(x: -20, y: 0))
+        glowPath.addLine(to: CGPoint(x: -10, y: 6))
+        glowPath.closeSubpath()
+
+        let glow = SKShapeNode(path: glowPath)
+        glow.fillColor = .orange
+        glow.strokeColor = .clear
+        glow.alpha = 0.3
+        glow.zPosition = -1
+        glow.isHidden = true
+
+        // pulsing effect
+        let pulse = SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.5, duration: 0.2),
+            SKAction.fadeAlpha(to: 0.3, duration: 0.2)
+        ])
+        glow.run(SKAction.repeatForever(pulse))
+
+        return glow
+    }
+
+    func createThrustFlame() -> SKShapeNode {
+        let flameNode = SKShapeNode()
+        flameNode.isHidden = true
+
+        let flameColors: [NSColor] = [.yellow, .orange, .red]
+        let flameSizes: [CGFloat] = [4, 8, 12]
+
+        for (i, color) in flameColors.enumerated() {
+            let path = CGMutablePath()
+            let size = flameSizes[i]
+            path.move(to: CGPoint(x: -size, y: -size * 0.3))
+            path.addLine(to: CGPoint(x: -size * 2, y: 0))
+            path.addLine(to: CGPoint(x: -size, y: size * 0.3))
+            path.closeSubpath()
+
+            let flamePart = SKShapeNode(path: path)
+            flamePart.fillColor = color
+            flamePart.strokeColor = .clear
+            flamePart.alpha = 0.5 - CGFloat(i) * 0.15
+            flameNode.addChild(flamePart)
+        }
+
+        // pulsing effect
+        let pulse = SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.4, duration: 0.1),
+            SKAction.fadeAlpha(to: 0.7, duration: 0.1)
+        ])
+        flameNode.run(SKAction.repeatForever(pulse))
+
+        return flameNode
+    }
+    
     private func spawnWave() {
         // Spawn a few large asteroids
         for _ in 0..<5 {
@@ -1026,8 +1092,12 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 soundManager.startThrust()
             }
             thrustEmitter?.particleBirthRate = 400
+            thrustFlame.isHidden = false
+            engineGlow.isHidden = false
         } else {
             isThrustSoundPlaying = false
+            thrustFlame.isHidden = true
+            engineGlow.isHidden = true
             thrustEmitter?.particleBirthRate = 0
             soundManager.stopThrust()
         }
