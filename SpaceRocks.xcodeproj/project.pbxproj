@@ -6,6 +6,15 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		59B62DD32F6B5E400058AC86 /* explode.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DCE2F6B5E400058AC86 /* explode.caf */; };
+		59B62DD42F6B5E400058AC86 /* fire.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DCF2F6B5E400058AC86 /* fire.caf */; };
+		59B62DD52F6B5E400058AC86 /* shield_off.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DD02F6B5E400058AC86 /* shield_off.caf */; };
+		59B62DD62F6B5E400058AC86 /* shield_on.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DD12F6B5E400058AC86 /* shield_on.caf */; };
+		59B62DD72F6B5E400058AC86 /* thrust.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DD22F6B5E400058AC86 /* thrust.caf */; };
+		59B62DE72F6C36D10058AC86 /* bg_heartbeat.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DE62F6C36D10058AC86 /* bg_heartbeat.caf */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		59F547FC2F69E8FC004EF527 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -24,6 +33,12 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		59B62DCE2F6B5E400058AC86 /* explode.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = explode.caf; sourceTree = "<group>"; };
+		59B62DCF2F6B5E400058AC86 /* fire.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = fire.caf; sourceTree = "<group>"; };
+		59B62DD02F6B5E400058AC86 /* shield_off.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = shield_off.caf; sourceTree = "<group>"; };
+		59B62DD12F6B5E400058AC86 /* shield_on.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = shield_on.caf; sourceTree = "<group>"; };
+		59B62DD22F6B5E400058AC86 /* thrust.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = thrust.caf; sourceTree = "<group>"; };
+		59B62DE62F6C36D10058AC86 /* bg_heartbeat.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = bg_heartbeat.caf; sourceTree = "<group>"; };
 		59F547E52F69E8FB004EF527 /* SpaceRocks.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SpaceRocks.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		59F547FB2F69E8FC004EF527 /* SpaceRocksTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpaceRocksTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		59F548052F69E8FC004EF527 /* SpaceRocksUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpaceRocksUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -72,9 +87,23 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		59B62DBF2F6B5ABA0058AC86 /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				59B62DE62F6C36D10058AC86 /* bg_heartbeat.caf */,
+				59B62DCE2F6B5E400058AC86 /* explode.caf */,
+				59B62DCF2F6B5E400058AC86 /* fire.caf */,
+				59B62DD02F6B5E400058AC86 /* shield_off.caf */,
+				59B62DD12F6B5E400058AC86 /* shield_on.caf */,
+				59B62DD22F6B5E400058AC86 /* thrust.caf */,
+			);
+			path = Sounds;
+			sourceTree = "<group>";
+		};
 		59F547DC2F69E8FB004EF527 = {
 			isa = PBXGroup;
 			children = (
+				59B62DBF2F6B5ABA0058AC86 /* Sounds */,
 				59F547E72F69E8FB004EF527 /* SpaceRocks */,
 				59F547FE2F69E8FC004EF527 /* SpaceRocksTests */,
 				59F548082F69E8FC004EF527 /* SpaceRocksUITests */,
@@ -212,6 +241,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				59B62DD32F6B5E400058AC86 /* explode.caf in Resources */,
+				59B62DE72F6C36D10058AC86 /* bg_heartbeat.caf in Resources */,
+				59B62DD42F6B5E400058AC86 /* fire.caf in Resources */,
+				59B62DD52F6B5E400058AC86 /* shield_off.caf in Resources */,
+				59B62DD62F6B5E400058AC86 /* shield_on.caf in Resources */,
+				59B62DD72F6B5E400058AC86 /* thrust.caf in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

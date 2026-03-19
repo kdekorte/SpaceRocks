@@ -32,6 +32,10 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private var gameOverLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private var isThrustSoundPlaying = false
 
+    // Fire rate limiting
+    private var fireCooldown: TimeInterval = 0.1 // 10 shots per second
+    private var timeUntilNextShot: TimeInterval = 0
+
     private var highScoreLabel = SKLabelNode(fontNamed: "Menlo")
     private var titleShadow = SKLabelNode(fontNamed: "Menlo-Bold")
     private var gameOverShadow = SKLabelNode(fontNamed: "Menlo-Bold")
@@ -90,17 +94,27 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     // NOTE: Add fire.caf, thrust.caf, explode.caf, shield_on.caf, and shield_off.caf to your bundle for sounds. If missing, the game still runs silently.
     // Sounds (use bundled system sounds if no assets are provided)
     private let fireSound = SKAction.playSoundFileNamed("fire.caf", waitForCompletion: false)
-    private let thrustSound = SKAction.playSoundFileNamed("thrust.caf", waitForCompletion: false)
+    //private let thrustSound = SKAction.playSoundFileNamed("thrust.caf", waitForCompletion: false)
     private let explodeSound = SKAction.playSoundFileNamed("explode.caf", waitForCompletion: false)
     private let shieldOnSound = SKAction.playSoundFileNamed("shield_on.caf", waitForCompletion: false)
     private let shieldOffSound = SKAction.playSoundFileNamed("shield_off.caf", waitForCompletion: false)
-
+    private let soundManager = SoundManager.shared
+    private let inputManager = InputManager.shared
+    
     // MARK: - Scene Lifecycle
     override func didMove(to view: SKView) {
+        
+        // Set up tracking so we can hide/unhide cursor on enter/exit
+        let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect]
+        let trackingArea = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+        view.addTrackingArea(trackingArea)
+        
         backgroundColor = .black
+        self.scaleMode = .resizeFill
         physicsWorld.gravity = .zero
         physicsWorld.contactDelegate = self
 
+        soundManager.preloadSounds()
         setupStarfield()
 
         highScore = UserDefaults.standard.integer(forKey: highScoreKey)
@@ -110,6 +124,12 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         print("didMove: scene loaded, state=\(state)")
         // Ensure key events go to the scene, reducing menu handling
         self.view?.window?.makeFirstResponder(self)
+    }
+    
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        print("didChangeSize: new size=\(self.size)")
+        layoutHUD()
     }
 
     // MARK: - Setup
@@ -173,6 +193,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         lives = 3
         nextExtraLifeScore = 10000
         updateLivesLabel()
+        layoutHUD()
     }
 
     private func updateLivesLabel() {
@@ -208,6 +229,61 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 shieldCooldownLabel.run(.fadeOut(withDuration: 0.2))
             }
         }
+    }
+
+    private func layoutHUD() {
+        // Reposition HUD labels relative to current frame
+        scoreLabel.position = CGPoint(x: frame.minX + 20, y: frame.maxY - 20)
+        livesLabel.position = CGPoint(x: frame.maxX - 20, y: frame.maxY - 20)
+        highScoreLabel.position = CGPoint(x: frame.midX, y: frame.maxY - 20)
+
+        // Rebuild shield meter geometry based on new size
+        let meterWidth: CGFloat = 160
+        let meterHeight: CGFloat = 6
+        let meterOrigin = CGPoint(x: frame.midX - meterWidth/2, y: frame.maxY - 40)
+
+        let bgPath = CGMutablePath()
+        bgPath.addRoundedRect(in: CGRect(origin: meterOrigin, size: CGSize(width: meterWidth, height: meterHeight)), cornerWidth: 3, cornerHeight: 3)
+        shieldMeterBackground.path = bgPath
+
+        // Fill path depends on current shieldPower, so reuse updateShieldMeter() to set fill path and alpha
+        updateShieldMeter()
+
+        // Cooldown label under meter
+        shieldCooldownLabel.position = CGPoint(x: frame.midX, y: frame.maxY - 48)
+
+        // Dynamic font scaling based on scene height
+        let h = max(frame.height, 1)
+        let titleScale = clamp((h / 800.0), min: 0.7, max: 1.4)
+        let subtitleScale = clamp((h / 800.0), min: 0.8, max: 1.3)
+
+        if titleLabel.parent != nil {
+            titleLabel.fontSize = 44 * titleScale
+            titleLabel.position = CGPoint(x: frame.midX, y: frame.midY + 60 * titleScale)
+            // Update shadow to match title
+            titleShadow.removeFromParent()
+            titleShadow = addDropShadow(to: titleLabel)
+            addChild(titleShadow)
+        }
+        if gameOverLabel.parent != nil {
+            gameOverLabel.fontSize = 44 * titleScale
+            gameOverLabel.position = CGPoint(x: frame.midX, y: frame.midY + 40 * titleScale)
+            gameOverShadow.removeFromParent()
+            gameOverShadow = addDropShadow(to: gameOverLabel)
+            addChild(gameOverShadow)
+        }
+        if subtitleLabel.parent != nil {
+            subtitleLabel.fontSize = 18 * subtitleScale
+            subtitleLabel.position = CGPoint(x: frame.midX, y: frame.midY - 10 * subtitleScale)
+        }
+        if infoLabel.parent != nil {
+            infoLabel.fontSize = 14 * subtitleScale
+            infoLabel.position = CGPoint(x: frame.midX, y: frame.minY + 40 * subtitleScale)
+        }
+    }
+    
+    private func clamp(_ value: CGFloat, min minVal: CGFloat, max maxVal: CGFloat) -> CGFloat {
+        return max(minVal, min(maxVal, value))
     }
 
     private func createShip() {
@@ -357,8 +433,49 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         asteroid.physicsBody?.angularVelocity = CGFloat.random(in: -1.5...1.5)
     }
 
-    // MARK: - Title, GameOver, and State Management
+    // MARK: - Shield Helpers
+    private func activateShield() {
+        guard !shieldActive, !shieldCooldown, shieldPower >= shieldMinToActivate else { return }
+        shieldActive = true
+        shieldNode?.run(.group([
+            .fadeAlpha(to: 0.9, duration: 0.1),
+            .customAction(withDuration: 0.1) { node, _ in
+                (node as? SKShapeNode)?.glowWidth = 8
+            }
+        ]))
+        run(shieldOnSound)
+    }
 
+    private func deactivateShield(triggerCooldown: Bool = false) {
+        shieldActive = false
+        shieldNode?.run(.group([
+            .fadeAlpha(to: 0.0, duration: 0.1),
+            .customAction(withDuration: 0.1) { node, _ in
+                (node as? SKShapeNode)?.glowWidth = 6
+            }
+        ]))
+        run(shieldOffSound)
+        if triggerCooldown {
+            shieldCooldown = true
+            shieldCooldownTimer = shieldCooldownDuration
+            updateShieldCooldownHUD()
+        }
+    }
+
+    private func runShieldDepletedFlicker() {
+        let flicker = SKAction.sequence([
+            .fadeAlpha(to: 0.2, duration: 0.05),
+            .fadeAlpha(to: 0.9, duration: 0.05),
+            .fadeAlpha(to: 0.2, duration: 0.05),
+            .fadeAlpha(to: 0.0, duration: 0.1)
+        ])
+        let reduceGlow = SKAction.customAction(withDuration: 0.2) { node, _ in
+            (node as? SKShapeNode)?.glowWidth = 6
+        }
+        shieldNode?.run(.sequence([flicker, reduceGlow]))
+    }
+
+    // MARK: - Title, GameOver, and State Management (restored)
     private func showTitle() {
         state = .title
         clearGameObjects()
@@ -432,7 +549,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         shieldCooldownTimer = 0
         updateShieldMeter()
         updateShieldCooldownHUD()
-
+        soundManager.startBackgroundMusic()
+        
         createShip()
         spawnWave()
     }
@@ -440,7 +558,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private func showGameOver() {
         state = .gameOver
         clearGameObjects()
-
+        soundManager.stopBackgroundMusic()
+        
         gameOverLabel.text = "GAME OVER"
         gameOverLabel.fontSize = 44
         gameOverLabel.fontColor = .white
@@ -478,226 +597,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             .sequence([.scale(to: 1.05, duration: 0.2), .scale(to: 1.0, duration: 0.1)])
         ]))
     }
-
+    
     private func clearGameObjects() {
         ship?.removeFromParent()
         asteroids.forEach { $0.removeFromParent() }
         bullets.forEach { $0.removeFromParent() }
         asteroids.removeAll()
         bullets.removeAll()
-    }
-
-    // MARK: - Input
-    override func keyDown(with event: NSEvent) {
-        switch state {
-        case .title:
-            if event.keyCode == 49 { // space
-                run(fireSound)
-                startGame()
-            }
-        case .playing:
-            switch event.keyCode {
-            case 123: // left
-                turningLeft = true
-            case 124: // right
-                turningRight = true
-            case 126: // up
-                thrusting = true
-            case 49: // space -> fire
-                fireBullet()
-            case 1: // 'S' key -> shield on (if enough power and not cooldown)
-                if !shieldActive && !shieldCooldown && shieldPower >= shieldMinToActivate {
-                    shieldActive = true
-                    shieldNode?.run(.group([
-                        .fadeAlpha(to: 0.9, duration: 0.1),
-                        .customAction(withDuration: 0.1) { node, _ in
-                            (node as? SKShapeNode)?.glowWidth = 8
-                        }
-                    ]))
-                    run(shieldOnSound)
-                }
-            case 56, 60: // Shift keys -> shield on (if enough power and not cooldown)
-                if !shieldActive && !shieldCooldown && shieldPower >= shieldMinToActivate {
-                    shieldActive = true
-                    shieldNode?.run(.group([
-                        .fadeAlpha(to: 0.9, duration: 0.1),
-                        .customAction(withDuration: 0.1) { node, _ in
-                            (node as? SKShapeNode)?.glowWidth = 8
-                        }
-                    ]))
-                    run(shieldOnSound)
-                }
-            default:
-                break
-            }
-        case .gameOver:
-            if event.keyCode == 49 { // space
-                run(fireSound)
-                startGame()
-            }
-        }
-    }
-
-    override func keyUp(with event: NSEvent) {
-        guard state == .playing else { return }
-        switch event.keyCode {
-        case 123:
-            turningLeft = false
-        case 124:
-            turningRight = false
-        case 126:
-            thrusting = false
-        case 1: // 'S' released
-            shieldActive = false
-            shieldNode?.run(.group([
-                .fadeAlpha(to: 0.0, duration: 0.1),
-                .customAction(withDuration: 0.1) { node, _ in
-                    (node as? SKShapeNode)?.glowWidth = 6
-                }
-            ]))
-            run(shieldOffSound)
-        case 56, 60: // Shift released
-            shieldActive = false
-            shieldNode?.run(.group([
-                .fadeAlpha(to: 0.0, duration: 0.1),
-                .customAction(withDuration: 0.1) { node, _ in
-                    (node as? SKShapeNode)?.glowWidth = 6
-                }
-            ]))
-            run(shieldOffSound)
-        default:
-            break
-        }
-    }
-
-    // MARK: - Actions
-    private func fireBullet() {
-        guard state == .playing else { return }
-        guard ship.parent != nil else { return }
-        let bullet = SKShapeNode(circleOfRadius: 2)
-        bullet.fillColor = .white
-        bullet.strokeColor = .white
-        bullet.position = ship.position + forwardVector() * 18
-        bullet.zPosition = -1
-
-        bullet.physicsBody = SKPhysicsBody(circleOfRadius: 2)
-        bullet.physicsBody?.isDynamic = true
-        bullet.physicsBody?.affectedByGravity = false
-        bullet.physicsBody?.linearDamping = 0
-        bullet.physicsBody?.categoryBitMask = PhysicsCategory.bullet
-        bullet.physicsBody?.contactTestBitMask = PhysicsCategory.asteroid
-        bullet.physicsBody?.collisionBitMask = PhysicsCategory.none
-
-        let trail = makeBulletTrail()
-        trail.targetNode = self
-        bullet.addChild(trail)
-
-        run(fireSound)
-        addChild(bullet)
-        bullets.append(bullet)
-
-        let speed: CGFloat = 300
-        bullet.physicsBody?.velocity = forwardVector() * speed + (ship.physicsBody?.velocity ?? .zero)
-
-        // Remove after some time
-        bullet.run(.sequence([.wait(forDuration: 1.2), .removeFromParent()])) { [weak self] in
-            self?.bullets.removeAll { $0 == bullet }
-        }
-    }
-
-    private func forwardVector() -> CGVector {
-        let angle = ship.zRotation
-        return CGVector(dx: cos(angle), dy: sin(angle))
-    }
-
-    // MARK: - Update Loop
-    override func update(_ currentTime: TimeInterval) {
-        if lastUpdateTime == 0 { lastUpdateTime = currentTime }
-        let dt = currentTime - lastUpdateTime
-        lastUpdateTime = currentTime
-
-        guard state == .playing else { return }
-        
-        shieldTimer += dt
-        while shieldTimer >= shieldTick {
-            shieldTimer -= shieldTick
-            if shieldActive {
-                shieldPower = max(0, shieldPower - 10)
-                if shieldPower == 0 {
-                    shieldActive = false
-                    shieldCooldown = true
-                    shieldCooldownTimer = shieldCooldownDuration
-                    updateShieldCooldownHUD()
-                    let flicker = SKAction.sequence([
-                        .fadeAlpha(to: 0.2, duration: 0.05),
-                        .fadeAlpha(to: 0.9, duration: 0.05),
-                        .fadeAlpha(to: 0.2, duration: 0.05),
-                        .fadeAlpha(to: 0.0, duration: 0.1)
-                    ])
-                    let reduceGlow = SKAction.customAction(withDuration: 0.2) { node, _ in
-                        (node as? SKShapeNode)?.glowWidth = 6
-                    }
-                    shieldNode?.run(.sequence([flicker, reduceGlow]))
-                    run(shieldOffSound)
-                }
-            } else {
-                shieldPower = min(100, shieldPower + 1)
-            }
-            updateShieldMeter()
-        }
-        
-        if shieldCooldown {
-            shieldCooldownTimer -= dt
-            if shieldCooldownTimer <= 0 {
-                shieldCooldown = false
-                shieldCooldownTimer = 0
-                updateShieldCooldownHUD()
-            }
-        }
-
-        // Rotate
-        let turnSpeed: CGFloat = 3.0
-        if turningLeft { ship.zRotation += turnSpeed * CGFloat(dt) }
-        if turningRight { ship.zRotation -= turnSpeed * CGFloat(dt) }
-
-        // Thrust
-        if thrusting {
-            print("update: thrusting -> enabling thrust particles")
-            let thrust: CGFloat = 180
-            let add = forwardVector() * (thrust * CGFloat(dt))
-            if let v = ship.physicsBody?.velocity {
-                ship.physicsBody!.velocity = v + add
-            } else {
-                ship.physicsBody!.velocity = add
-            }
-            if !isThrustSoundPlaying {
-                isThrustSoundPlaying = true
-                run(thrustSound) { [weak self] in self?.isThrustSoundPlaying = false }
-            }
-            thrustEmitter?.particleBirthRate = 400
-        } else {
-            isThrustSoundPlaying = false
-            thrustEmitter?.particleBirthRate = 0
-        }
-
-        // Screen wrap for ship, asteroids, bullets
-        wrapNode(ship)
-        for a in asteroids { wrapNode(a) }
-        for b in bullets { wrapNode(b) }
-
-        // If no asteroids, new wave
-        if asteroids.isEmpty {
-            spawnWave()
-        }
-    }
-
-    private func wrapNode(_ node: SKNode) {
-        var p = node.position
-        if p.x < frame.minX { p.x = frame.maxX }
-        else if p.x > frame.maxX { p.x = frame.minX }
-        if p.y < frame.minY { p.y = frame.maxY }
-        else if p.y > frame.maxY { p.y = frame.minY }
-        node.position = p
     }
 
     // MARK: - Contacts
@@ -763,21 +669,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 shieldPower = max(0, shieldPower - 5)
                 updateShieldMeter()
                 if shieldPower == 0 {
-                    shieldActive = false
-                    shieldCooldown = true
-                    shieldCooldownTimer = shieldCooldownDuration
-                    updateShieldCooldownHUD()
-                    let flicker = SKAction.sequence([
-                        .fadeAlpha(to: 0.2, duration: 0.05),
-                        .fadeAlpha(to: 0.9, duration: 0.05),
-                        .fadeAlpha(to: 0.2, duration: 0.05),
-                        .fadeAlpha(to: 0.0, duration: 0.1)
-                    ])
-                    let reduceGlow = SKAction.customAction(withDuration: 0.2) { node, _ in
-                        (node as? SKShapeNode)?.glowWidth = 6
-                    }
-                    shieldNode?.run(.sequence([flicker, reduceGlow]))
-                    run(shieldOffSound)
+                    deactivateShield(triggerCooldown: true)
+                    runShieldDepletedFlicker()
                 }
             } else {
                 shipHit()
@@ -997,7 +890,186 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         emitter.zPosition = -1
         return emitter
     }
+    
+    private func toggleFullscreen() {
+        if let window = self.view?.window {
+            window.toggleFullScreen(nil)
+        }
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.hide()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.unhide()
+    }
+    
+    // MARK: - Input
+    override func keyDown(with event: NSEvent) {
+        // Global fullscreen toggle on 'f' key at any state
+        if event.keyCode == 3 { // 'f'
+            toggleFullscreen()
+            return
+        }
+        
+        switch state {
+        case .title:
+            if event.keyCode == 49 { // space
+                run(fireSound)
+                startGame()
+            }
+        case .playing:
+            inputManager.keyDown(event: event)
+        case .gameOver:
+            if event.keyCode == 49 { // space
+                run(fireSound)
+                startGame()
+            }
+        }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard state == .playing else { return }
+        inputManager.keyUp(event: event)
+    }
+
+    // MARK: - Actions
+    private func fireBullet() {
+        guard state == .playing else { return }
+        guard ship.parent != nil else { return }
+        let bullet = SKShapeNode(circleOfRadius: 2)
+        bullet.fillColor = .white
+        bullet.strokeColor = .white
+        bullet.position = ship.position + forwardVector() * 18
+        bullet.zPosition = -1
+
+        bullet.physicsBody = SKPhysicsBody(circleOfRadius: 2)
+        bullet.physicsBody?.isDynamic = true
+        bullet.physicsBody?.affectedByGravity = false
+        bullet.physicsBody?.linearDamping = 0
+        bullet.physicsBody?.categoryBitMask = PhysicsCategory.bullet
+        bullet.physicsBody?.contactTestBitMask = PhysicsCategory.asteroid
+        bullet.physicsBody?.collisionBitMask = PhysicsCategory.none
+
+        let trail = makeBulletTrail()
+        trail.targetNode = self
+        bullet.addChild(trail)
+
+        run(fireSound)
+        addChild(bullet)
+        bullets.append(bullet)
+
+        let speed: CGFloat = 300
+        bullet.physicsBody?.velocity = forwardVector() * speed + (ship.physicsBody?.velocity ?? .zero)
+
+        // Remove after some time
+        bullet.run(.sequence([.wait(forDuration: 1.2), .removeFromParent()])) { [weak self] in
+            self?.bullets.removeAll { $0 == bullet }
+        }
+    }
+
+    private func forwardVector() -> CGVector {
+        let angle = ship.zRotation
+        return CGVector(dx: cos(angle), dy: sin(angle))
+    }
+
+    // MARK: - Update Loop
+    override func update(_ currentTime: TimeInterval) {
+        if lastUpdateTime == 0 { lastUpdateTime = currentTime }
+        let dt = currentTime - lastUpdateTime
+        lastUpdateTime = currentTime
+
+        guard state == .playing else { return }
+        
+        shieldTimer += dt
+        while shieldTimer >= shieldTick {
+            shieldTimer -= shieldTick
+            if shieldActive {
+                shieldPower = max(0, shieldPower - 10)
+                if shieldPower == 0 {
+                    deactivateShield(triggerCooldown: true)
+                    runShieldDepletedFlicker()
+                }
+            } else {
+                shieldPower = min(100, shieldPower + 1)
+            }
+            updateShieldMeter()
+        }
+        
+        if shieldCooldown {
+            shieldCooldownTimer -= dt
+            if shieldCooldownTimer <= 0 {
+                shieldCooldown = false
+                shieldCooldownTimer = 0
+                updateShieldCooldownHUD()
+            }
+        }
+
+        // Rotate
+        let turnSpeed: CGFloat = 3.0
+        //if turningLeft { ship.zRotation += turnSpeed * CGFloat(dt) }
+        //if turningRight { ship.zRotation -= turnSpeed * CGFloat(dt) }
+
+        ship.zRotation += CGFloat(inputManager.rotation) * turnSpeed * CGFloat(dt)
+        
+        
+        // Thrust
+        if thrusting || inputManager.isThrusting {
+            print("update: thrusting -> enabling thrust particles")
+            let thrust: CGFloat = 180
+            let add = forwardVector() * (thrust * CGFloat(dt))
+            if let v = ship.physicsBody?.velocity {
+                ship.physicsBody!.velocity = v + add
+            } else {
+                ship.physicsBody!.velocity = add
+            }
+            if !isThrustSoundPlaying {
+                isThrustSoundPlaying = true
+                soundManager.startThrust()
+            }
+            thrustEmitter?.particleBirthRate = 400
+        } else {
+            isThrustSoundPlaying = false
+            thrustEmitter?.particleBirthRate = 0
+            soundManager.stopThrust()
+        }
+
+        // Fire rate limiting driven by InputManager
+        timeUntilNextShot = max(0, timeUntilNextShot - dt)
+        if inputManager.isFiring && timeUntilNextShot == 0 {
+            fireBullet()
+            timeUntilNextShot = fireCooldown
+        }
+
+        if inputManager.isShieldActive {
+            activateShield()
+        } else if shieldActive {
+            deactivateShield()
+        }
+        
+        // Screen wrap for ship, asteroids, bullets
+        wrapNode(ship)
+        for a in asteroids { wrapNode(a) }
+        for b in bullets { wrapNode(b) }
+
+        // If no asteroids, new wave
+        if asteroids.isEmpty {
+            spawnWave()
+        }
+    }
+
+    
+    private func wrapNode(_ node: SKNode) {
+        var p = node.position
+        if p.x < frame.minX { p.x = frame.maxX }
+        else if p.x > frame.maxX { p.x = frame.minX }
+        if p.y < frame.minY { p.y = frame.maxY }
+        else if p.y > frame.maxY { p.y = frame.minY }
+        node.position = p
+    }
 }
+    
 // MARK: - Small math helpers
 private extension CGPoint {
     static func + (lhs: CGPoint, rhs: CGVector) -> CGPoint { CGPoint(x: lhs.x + rhs.dx, y: lhs.y + rhs.dy) }
@@ -1006,5 +1078,4 @@ private extension CGVector {
     static func + (lhs: CGVector, rhs: CGVector) -> CGVector { CGVector(dx: lhs.dx + rhs.dx, dy: lhs.dy + rhs.dy) }
     static func * (v: CGVector, s: CGFloat) -> CGVector { CGVector(dx: v.dx * s, dy: v.dy * s) }
 }
-
 
