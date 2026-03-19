@@ -17,7 +17,6 @@ private struct PhysicsCategory {
 
 class GameScene: SKScene, SKPhysicsContactDelegate {
 
-    // MARK: - Game State
     private var lastUpdateTime: TimeInterval = 0
     private var ship: SKShapeNode!
     private var thrusting = false
@@ -101,7 +100,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private let soundManager = SoundManager.shared
     private let inputManager = InputManager.shared
     
-    // MARK: - Scene Lifecycle
     override func didMove(to view: SKView) {
         
         // Set up tracking so we can hide/unhide cursor on enter/exit
@@ -132,7 +130,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         layoutHUD()
     }
 
-    // MARK: - Setup
     private func createHUD() {
         // Score label
         scoreLabel.fontSize = 16
@@ -297,7 +294,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
 
         let node = SKShapeNode(path: path)
         node.strokeColor = .white
-        node.lineWidth = 2
+        node.lineWidth = 3
+        node.fillColor = .black
         node.position = CGPoint(x: frame.midX, y: frame.midY)
 
         node.physicsBody = SKPhysicsBody(polygonFrom: path)
@@ -433,7 +431,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         asteroid.physicsBody?.angularVelocity = CGFloat.random(in: -1.5...1.5)
     }
 
-    // MARK: - Shield Helpers
     private func activateShield() {
         guard !shieldActive, !shieldCooldown, shieldPower >= shieldMinToActivate else { return }
         shieldActive = true
@@ -475,7 +472,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         shieldNode?.run(.sequence([flicker, reduceGlow]))
     }
 
-    // MARK: - Title, GameOver, and State Management (restored)
     private func showTitle() {
         state = .title
         clearGameObjects()
@@ -606,7 +602,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         bullets.removeAll()
     }
 
-    // MARK: - Contacts
     func didBegin(_ contact: SKPhysicsContact) {
         let a = contact.bodyA.categoryBitMask
         let b = contact.bodyB.categoryBitMask
@@ -770,8 +765,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         score = max(0, score - 200)
     }
     
-    // MARK: - Label Helpers
-    
     private func addDropShadow(to label: SKLabelNode, offset: CGPoint = CGPoint(x: 2, y: -2), color: SKColor = .gray) -> SKLabelNode {
         let shadow = SKLabelNode(fontNamed: label.fontName)
         shadow.text = label.text
@@ -905,7 +898,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         NSCursor.unhide()
     }
     
-    // MARK: - Input
     override func keyDown(with event: NSEvent) {
         // Global fullscreen toggle on 'f' key at any state
         if event.keyCode == 3 { // 'f'
@@ -934,13 +926,12 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         inputManager.keyUp(event: event)
     }
 
-    // MARK: - Actions
     private func fireBullet() {
         guard state == .playing else { return }
         guard ship.parent != nil else { return }
         let bullet = SKShapeNode(circleOfRadius: 2)
         bullet.fillColor = .white
-        bullet.strokeColor = .white
+        bullet.strokeColor = NSColor(calibratedRed: 0.1, green: 1.0, blue: 0.2, alpha: 1.0)
         bullet.position = ship.position + forwardVector() * 18
         bullet.zPosition = -1
 
@@ -974,7 +965,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         return CGVector(dx: cos(angle), dy: sin(angle))
     }
 
-    // MARK: - Update Loop
     override func update(_ currentTime: TimeInterval) {
         if lastUpdateTime == 0 { lastUpdateTime = currentTime }
         let dt = currentTime - lastUpdateTime
@@ -1076,8 +1066,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         node.position = p
     }
 }
-    
-// MARK: - Small math helpers
+
 private extension CGPoint {
     static func + (lhs: CGPoint, rhs: CGVector) -> CGPoint { CGPoint(x: lhs.x + rhs.dx, y: lhs.y + rhs.dy) }
 }
