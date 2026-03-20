@@ -32,6 +32,9 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private var subtitleLabel = SKLabelNode(fontNamed: "Menlo")
     private var gameOverLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private var isThrustSoundPlaying = false
+    private var isShipHit = false
+    private var isShipInvulnerable = false
+    private var shipInvulnerabilityTime: TimeInterval = 0
 
     // Fire rate limiting
     private var fireCooldown: TimeInterval = 0.1 // 10 shots per second
@@ -126,10 +129,12 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     
     override func didChangeSize(_ oldSize: CGSize) {
         super.didChangeSize(oldSize)
-        print("didChangeSize: new size=\(self.size)")
+ 
+        // Reposition HUD labels relative to current frame
         layoutHUD()
+        setupStarfield()
     }
-
+    
     private func createHUD() {
         // Score label
         scoreLabel.fontSize = 16
@@ -284,6 +289,10 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func createShip() {
+        // Check if the ship already exists and return early if it does
+        guard state == .playing else { return }
+        isShipHit = false
+        
         // Triangle ship
         let path = CGMutablePath()
         let shipSize: CGFloat = 16
@@ -318,7 +327,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         addChild(node)
         ship = node
         
-        
         // Shield ring (initially hidden)
         let ring = SKShapeNode(circleOfRadius: shipSize + 6)
         ring.strokeColor = .yellow
@@ -328,9 +336,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         ring.glowWidth = 6
         node.addChild(ring)
         shieldNode = ring
-    
     }
-
+    
     func createEngineGlow() -> SKShapeNode {
         let glowPath = CGMutablePath()
         glowPath.move(to: CGPoint(x: -10, y: -6))
@@ -385,6 +392,34 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         flameNode.run(SKAction.repeatForever(pulse))
 
         return flameNode
+    }
+
+    private func startShipInvulnerability(duration: TimeInterval = 2.0) {
+        guard let body = ship.physicsBody else { return }
+        isShipInvulnerable = true
+        shipInvulnerabilityTime = duration
+        // Disable ship collision category so asteroids won't trigger hits
+        body.categoryBitMask = PhysicsCategory.none
+        body.contactTestBitMask = PhysicsCategory.none
+        body.collisionBitMask = PhysicsCategory.none
+        // Visual flicker to indicate invulnerability
+        let flicker = SKAction.sequence([
+            .fadeAlpha(to: 0.3, duration: 0.1),
+            .fadeAlpha(to: 1.0, duration: 0.1)
+        ])
+        ship.run(.repeatForever(flicker), withKey: "invulnFlicker")
+    }
+
+    private func endShipInvulnerability() {
+        isShipInvulnerable = false
+        shipInvulnerabilityTime = 0
+        // Restore ship physics categories
+        ship.physicsBody?.categoryBitMask = PhysicsCategory.ship
+        ship.physicsBody?.contactTestBitMask = PhysicsCategory.asteroid
+        ship.physicsBody?.collisionBitMask = PhysicsCategory.none
+        // Stop flicker and ensure visible
+        ship.removeAction(forKey: "invulnFlicker")
+        ship.alpha = 1.0
     }
     
     private func spawnWave() {
@@ -588,9 +623,11 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         shieldCooldownTimer = 0
         updateShieldMeter()
         updateShieldCooldownHUD()
+        isShipHit = false
         soundManager.startBackgroundMusic()
         
         createShip()
+        startShipInvulnerability(duration: 0.5)
         spawnWave()
     }
 
@@ -650,8 +687,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         let a = contact.bodyA.categoryBitMask
         let b = contact.bodyB.categoryBitMask
         
-        print("didBegin: contact categories a=\(a) b=\(b)")
-
         if (a == PhysicsCategory.bullet && b == PhysicsCategory.asteroid) ||
             (b == PhysicsCategory.bullet && a == PhysicsCategory.asteroid) {
             let bulletNode = (contact.bodyA.categoryBitMask == PhysicsCategory.bullet ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode
@@ -712,7 +747,9 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                     runShieldDepletedFlicker()
                 }
             } else {
-                shipHit()
+                if !isShipHit && !isShipInvulnerable {
+                    shipHit()
+                }
             }
         }
     }
@@ -770,7 +807,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     }
 
     private func shipHit() {
-        guard state == .playing else { return }
+        guard !isShipHit, state == .playing else { return }
+        isShipHit = true
+        // Temporarily disable ship physics to avoid extra contacts
+        ship.physicsBody?.categoryBitMask = PhysicsCategory.none
+        ship.physicsBody?.contactTestBitMask = PhysicsCategory.none
+        ship.physicsBody?.collisionBitMask = PhysicsCategory.none
+
         run(explodeSound)
 
         let explosion = SKEmitterNode()
@@ -804,7 +847,11 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         // Respawn after short delay
         run(.sequence([
             .wait(forDuration: 1.0),
-            .run { [weak self] in self?.createShip() }
+            .run { [weak self] in
+                guard let self = self else { return }
+                self.createShip()
+                self.startShipInvulnerability(duration: 0.5)
+            }
         ]))
         score = max(0, score - 200)
     }
@@ -990,7 +1037,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     override func update(_ currentTime: TimeInterval) {
         if lastUpdateTime == 0 { lastUpdateTime = currentTime }
         let dt = currentTime - lastUpdateTime
-        lastUpdateTime = currentTime
 
         if state == .title || state == .gameOver {
             if inputManager.isFiring {
@@ -999,7 +1045,20 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             }
         }
         
-        guard state == .playing else { return }
+        guard state == .playing else {
+            lastUpdateTime = currentTime
+            return
+        }
+
+        // Handle post-respawn invulnerability timer
+        if isShipInvulnerable {
+            shipInvulnerabilityTime -= dt
+            if shipInvulnerabilityTime <= 0 {
+                endShipInvulnerability()
+            }
+        }
+        
+        lastUpdateTime = currentTime
         
         shieldTimer += dt
         while shieldTimer >= shieldTick {
@@ -1035,7 +1094,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         
         // Thrust
         if thrusting || inputManager.isThrusting {
-            print("update: thrusting -> enabling thrust particles")
             let thrust: CGFloat = 180
             let add = forwardVector() * (thrust * CGFloat(dt))
             if let v = ship.physicsBody?.velocity {
