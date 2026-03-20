@@ -46,9 +46,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private var starfieldBack = SKNode()
     private var starfieldFront = SKNode()
 
-    // Ship thrust emitter
-    private var thrustEmitter: SKEmitterNode?
-    
     // Shield
     private var shieldNode: SKShapeNode?
     private var shieldActive = false
@@ -321,23 +318,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         addChild(node)
         ship = node
         
-        thrustEmitter?.removeFromParent()
-        let emitter = makeThrustEmitter()
-        emitter.position = CGPoint(x: -10, y: 0)
-        emitter.targetNode = self
-        node.addChild(emitter)
-        emitter.particleBirthRate = 0
-        thrustEmitter = emitter
-        // TEMP: Force thrust visible briefly to verify rendering
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self = self else { return }
-            self.thrustEmitter?.particleSpeed = 0
-            self.thrustEmitter?.particleBirthRate = 800
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                self.thrustEmitter?.particleBirthRate = 0
-                self.thrustEmitter?.particleSpeed = 120
-            }
-        }
         
         // Shield ring (initially hidden)
         let ring = SKShapeNode(circleOfRadius: shipSize + 6)
@@ -348,13 +328,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         ring.glowWidth = 6
         node.addChild(ring)
         shieldNode = ring
-        
-        print("createShip: ship created at \(ship.position)")
-        if let te = thrustEmitter {
-            print("createShip: thrustEmitter attached at local position \(te.position), birthRate=\(te.particleBirthRate)")
-        } else {
-            print("createShip: thrustEmitter is nil")
-        }
+    
     }
 
     func createEngineGlow() -> SKShapeNode {
@@ -891,28 +865,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         makeStars(count: 40, in: starfieldFront, speed: 16, alpha: 1.0)
     }
     
-    private func makeThrustEmitter() -> SKEmitterNode {
-        let emitter = SKEmitterNode()
-        emitter.particleTexture = makeHalfCircleTexture(radius: 10, color: .red)
-        emitter.particleBirthRate = 140
-        emitter.particleLifetime = 0.6
-        emitter.particleLifetimeRange = 0.15
-        emitter.particleSpeed = 120
-        emitter.particleSpeedRange = 40
-        // Emit straight backward relative to the ship
-        emitter.emissionAngle = .pi
-        emitter.emissionAngleRange = .pi / 12
-        emitter.particleAlpha = 1.0
-        emitter.particleAlphaSpeed = -1.0
-        emitter.particleScale = 2.0
-        emitter.particleScaleRange = 0.4
-        emitter.particleScaleSpeed = -1.0
-        emitter.particleColorBlendFactor = 1.0
-        emitter.particlePositionRange = CGVector(dx: 2, dy: 2)
-        emitter.zPosition = 2
-        return emitter
-    }
-    
     private func makeHalfCircleTexture(radius: CGFloat, color: NSColor) -> SKTexture {
         // Build a semicircle shape node and render it directly to a texture
         let path = CGMutablePath()
@@ -1095,14 +1047,12 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 isThrustSoundPlaying = true
                 soundManager.startThrust()
             }
-            thrustEmitter?.particleBirthRate = 400
             thrustFlame.isHidden = false
             engineGlow.isHidden = false
         } else {
             isThrustSoundPlaying = false
             thrustFlame.isHidden = true
             engineGlow.isHidden = true
-            thrustEmitter?.particleBirthRate = 0
             soundManager.stopThrust()
         }
 
