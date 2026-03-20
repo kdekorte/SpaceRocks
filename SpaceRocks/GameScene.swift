@@ -70,6 +70,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private var lives: Int = 3
     private var nextExtraLifeScore: Int = 10000
+    private var level: Int = 0
 
     private let highScoreKey = "HighScore"
     private var highScore: Int = 0 {
@@ -413,8 +414,10 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     }
     
     private func spawnWave() {
+        soundManager.setBackgroundMusicSpeed(1.0 + (0.05 * Float(level)))
+        level += 1
         // Spawn a few large asteroids
-        for _ in 0..<5 {
+        for _ in 0..<(5 + (level / 2)) {
             spawnAsteroid(size: .large)
         }
     }
@@ -487,9 +490,9 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         // Give it some motion
         let speed: CGFloat
         switch size {
-        case .large: speed = 40
-        case .medium: speed = 70
-        case .small: speed = 100
+        case .large: speed = 40 + CGFloat(level * 10 )
+        case .medium: speed = 70 + CGFloat(level * 20 )
+        case .small: speed = 100 + CGFloat(level * 25 )
         }
         let vel = velocity ?? CGVector(dx: CGFloat.random(in: -1...1) * speed,
                                        dy: CGFloat.random(in: -1...1) * speed)
@@ -662,6 +665,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     
     private func clearGameObjects() {
         ship?.removeFromParent()
+        soundManager.stopThrust()
         asteroids.forEach { $0.removeFromParent() }
         bullets.forEach { $0.removeFromParent() }
         asteroids.removeAll()

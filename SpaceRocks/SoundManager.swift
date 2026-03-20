@@ -51,4 +51,9 @@ class SoundManager {
     func stopBackgroundMusic() {
         backgroundMusicPlayer?.stop()
     }
+    
+    func setBackgroundMusicSpeed(_ rate: Float) {
+        backgroundMusicPlayer?.enableRate = true
+        backgroundMusicPlayer?.rate = rate
+    }
 }
