@@ -33,6 +33,7 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private var titleLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private var subtitleLabel = SKLabelNode(fontNamed: "Menlo")
     private var gameOverLabel = SKLabelNode(fontNamed: "Menlo-Bold")
+    private var waveLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private var isThrustSoundPlaying = false
     private var isShipHit = false
     private var isShipInvulnerable = false
@@ -205,6 +206,16 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         nextExtraLifeScore = 10000
         updateLivesLabel()
         layoutHUD()
+
+        // Prepare wave label (initially hidden)
+        waveLabel.fontSize = 36
+        waveLabel.fontColor = .white
+        waveLabel.alpha = 0.0
+        waveLabel.zPosition = 20
+        waveLabel.horizontalAlignmentMode = .center
+        waveLabel.verticalAlignmentMode = .center
+        waveLabel.position = CGPoint(x: frame.midX, y: frame.midY)
+        addChild(waveLabel)
     }
 
     private func updateLivesLabel() {
@@ -290,6 +301,10 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         if infoLabel.parent != nil {
             infoLabel.fontSize = 14 * subtitleScale
             infoLabel.position = CGPoint(x: frame.midX, y: frame.minY + 40 * subtitleScale)
+        }
+
+        if waveLabel.parent != nil {
+            waveLabel.position = CGPoint(x: frame.midX, y: frame.midY)
         }
     }
     
@@ -431,9 +446,28 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         ship.alpha = 1.0
     }
     
+    private func showWaveAnnouncement(_ number: Int) {
+        waveLabel.removeAllActions()
+        waveLabel.text = "Wave \(number)"
+        waveLabel.alpha = 0.0
+        waveLabel.setScale(0.8)
+        waveLabel.position = CGPoint(x: frame.midX, y: frame.midY)
+        let appear = SKAction.group([
+            .fadeIn(withDuration: 0.15),
+            .sequence([.scale(to: 1.15, duration: 0.12), .scale(to: 1.0, duration: 0.08)])
+        ])
+        let hold = SKAction.wait(forDuration: 0.6)
+        let disappear = SKAction.group([
+            .fadeOut(withDuration: 0.2),
+            .scale(to: 0.9, duration: 0.2)
+        ])
+        waveLabel.run(.sequence([appear, hold, disappear]))
+    }
+
     private func spawnWave() {
         soundManager.setBackgroundMusicSpeed(1.0 + (0.05 * Float(level)))
         level += 1
+        showWaveAnnouncement(level)
         // Spawn a few large asteroids
         for _ in 0..<(5 + (level / 2)) {
             spawnAsteroid(size: .large)
@@ -1209,6 +1243,153 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
 
     private enum AlienSize: String { case large, small }
 
+    private func updateAlien(_ dt: TimeInterval) {
+        // Spawn timing
+        if !isAlienAlive {
+            alienSpawnTimer -= dt
+            if alienSpawnTimer <= 0 {
+                createAlienShip()
+                // Next spawn sometime later
+                alienSpawnTimer = 12.0 + Double.random(in: -3...3)
+            }
+            return
+        }
+        guard let alien = alienShip else { return }
+        // Wrap horizontally like other nodes
+        wrapNode(alien)
+
+        // If alien moved off beyond a margin, consider it gone
+        let margin: CGFloat = 40
+        if alien.position.x < frame.minX - margin || alien.position.x > frame.maxX + margin {
+            alien.removeFromParent()
+            alienShip = nil
+            isAlienAlive = false
+            if isUFOSoundPlaying {
+                soundManager.stopUFOSound()
+                isUFOSoundPlaying = false
+            }
+            return
+        }
+
+        // --- Asteroid avoidance: predict imminent collisions and sidestep vertically ---
+        // Look ahead along the alien's current velocity and a small lateral buffer.
+        if let alienBody = alien.physicsBody {
+            let lookaheadTime: CGFloat = 0.8 // seconds to look ahead
+            let ahead = CGVector(dx: alienBody.velocity.dx * lookaheadTime,
+                                 dy: alienBody.velocity.dy * lookaheadTime)
+            let probeCenter = CGPoint(x: alien.position.x + ahead.dx,
+                                      y: alien.position.y + ahead.dy)
+            // Probe radius accounts for saucer size and some safety margin
+            let probeRadius: CGFloat = 36
+            var threatDetected = false
+            var avgThreatY: CGFloat = 0
+            var threatCount: CGFloat = 0
+            for rock in asteroids {
+                // Skip if asteroid is far in X (cheap check first)
+                let dx = wrapDistanceX(from: probeCenter.x, to: rock.position.x)
+                let dy = wrapDistanceY(from: probeCenter.y, to: rock.position.y)
+                let dist2 = dx*dx + dy*dy
+                if dist2 < probeRadius * probeRadius {
+                    threatDetected = true
+                    avgThreatY += rock.position.y
+                    threatCount += 1
+                }
+            }
+            if threatDetected {
+                let avgY = avgThreatY / max(threatCount, 1)
+                // Decide a vertical sidestep direction: move away from average threat Y
+                let dirY: CGFloat = (alien.position.y >= avgY) ? 1.0 : -1.0
+                let sidestepStrength: CGFloat = 120 + CGFloat(level) * 8
+                // Blend new vertical velocity with existing to avoid abrupt snaps
+                let targetVY = dirY * sidestepStrength
+                let blend: CGFloat = 0.6
+                alienBody.velocity = CGVector(dx: alienBody.velocity.dx,
+                                              dy: alienBody.velocity.dy * (1 - blend) + targetVY * blend)
+                // Clamp vertical speed to keep behavior readable
+                let maxVY: CGFloat = 160
+                alienBody.velocity.dy = max(-maxVY, min(maxVY, alienBody.velocity.dy))
+                // Keep alien within vertical bounds
+                alien.position.y = clamp(alien.position.y, min: frame.minY + 40, max: frame.maxY - 40)
+            } else {
+                // Slowly relax vertical velocity back toward 0 when no threats
+                let relax: CGFloat = 0.9
+                alienBody.velocity.dy *= relax
+            }
+        }
+
+        // --- Smarter firing cadence: adapt interval based on player angle and speed ---
+        alienFireTimer -= dt
+        if alienFireTimer <= 0 {
+            fireAlienBullet()
+            // Compute relative geometry and player's speed
+            let playerPos = ship.position
+            let fromAlien = CGVector(dx: playerPos.x - alien.position.x, dy: playerPos.y - alien.position.y)
+            let aLen = max(0.001, sqrt(fromAlien.dx*fromAlien.dx + fromAlien.dy*fromAlien.dy))
+            let aimDir = CGVector(dx: fromAlien.dx / aLen, dy: fromAlien.dy / aLen)
+            let playerVel = ship.physicsBody?.velocity ?? .zero
+            let pSpeed = sqrt(playerVel.dx*playerVel.dx + playerVel.dy*playerVel.dy)
+            // Angle between UFO aim and player's velocity vector (0 = running directly away/toward, ~90 = crossing)
+            let pLen = max(0.001, sqrt(playerVel.dx*playerVel.dx + playerVel.dy*playerVel.dy))
+            let pDir = CGVector(dx: playerVel.dx / pLen, dy: playerVel.dy / pLen)
+            let dot = aimDir.dx * pDir.dx + aimDir.dy * pDir.dy
+            let angle = acos(max(-1, min(1, dot))) // radians in [0, pi]
+            let angleDeg = angle * 180 / .pi
+
+            // Base cadence by saucer size
+            let saucerSize: AlienSize = {
+                if let raw = alienShip?.userData?["size"] as? String, let s = AlienSize(rawValue: raw) { return s }
+                return .large
+            }()
+            var baseInterval: Double = (saucerSize == .large) ? 1.6 : 1.2
+
+            // Faster when player crosses (angle ~ 90 deg), slower when head-on or stationary
+            // Map angle 0..180 to a multiplier 0.8..1.2 with minimum at 90 degrees
+            let angleFactor: Double = {
+                let mid: Double = 90
+                let spread: Double = 90
+                let d = abs(Double(angleDeg) - mid) / spread // 0 at 90, 1 at 0/180
+                // 0 => 0.8, 1 => 1.2
+                return 0.8 + d * 0.4
+            }()
+
+            // Speed factor: faster when player moving fast laterally (> 200), slower when slow (< 60)
+            let speedFactor: Double = {
+                let s = Double(pSpeed)
+                if s >= 260 { return 0.75 }
+                if s >= 200 { return 0.85 }
+                if s <= 60  { return 1.2 }
+                return 1.0
+            }()
+
+            // Level tightening: higher levels reduce interval modestly
+            let levelFactor: Double = max(0.8, 1.0 - Double(min(level, 10)) * 0.02)
+
+            let jitter: Double = Double.random(in: -0.15...0.15)
+            alienFireTimer = max(0.35, baseInterval * angleFactor * speedFactor * levelFactor + jitter)
+        }
+
+        // Small jittery vertical movement (retained but softened by avoidance)
+        let dy = CGFloat.random(in: -20...20)
+        alien.position.y = clamp(alien.position.y + dy * CGFloat(dt), min: frame.minY + 40, max: frame.maxY - 40)
+    }
+
+    // Wrapped distance helpers to account for screen wrap when probing threats
+    private func wrapDistanceX(from x1: CGFloat, to x2: CGFloat) -> CGFloat {
+        let w = frame.width
+        var dx = x2 - x1
+        if dx >  w * 0.5 { dx -= w }
+        if dx < -w * 0.5 { dx += w }
+        return dx
+    }
+
+    private func wrapDistanceY(from y1: CGFloat, to y2: CGFloat) -> CGFloat {
+        let h = frame.height
+        var dy = y2 - y1
+        if dy >  h * 0.5 { dy -= h }
+        if dy < -h * 0.5 { dy += h }
+        return dy
+    }
+
     private func createAlienShip() {
         guard !isAlienAlive else { return }
         isAlienAlive = true
@@ -1266,45 +1447,6 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             soundManager.startUFOSound()
             isUFOSoundPlaying = true
         }
-    }
-
-    private func updateAlien(_ dt: TimeInterval) {
-        // Spawn timing
-        if !isAlienAlive {
-            alienSpawnTimer -= dt
-            if alienSpawnTimer <= 0 {
-                createAlienShip()
-                // Next spawn sometime later
-                alienSpawnTimer = 12.0 + Double.random(in: -3...3)
-            }
-            return
-        }
-        guard let alien = alienShip else { return }
-        // Wrap horizontally like other nodes
-        wrapNode(alien)
-
-        // If alien moved off beyond a margin, consider it gone
-        let margin: CGFloat = 40
-        if alien.position.x < frame.minX - margin || alien.position.x > frame.maxX + margin {
-            alien.removeFromParent()
-            alienShip = nil
-            isAlienAlive = false
-            if isUFOSoundPlaying {
-                soundManager.stopUFOSound()
-                isUFOSoundPlaying = false
-            }
-            return
-        }
-
-        // Fire toward player periodically
-        alienFireTimer -= dt
-        if alienFireTimer <= 0 {
-            fireAlienBullet()
-            alienFireTimer = 1.6 + Double.random(in: -0.5...0.5)
-        }
-        // Small jittery vertical movement
-        let dy = CGFloat.random(in: -20...20)
-        alien.position.y = clamp(alien.position.y + dy * CGFloat(dt), min: frame.minY + 40, max: frame.maxY - 40)
     }
 
     private func fireAlienBullet() {
