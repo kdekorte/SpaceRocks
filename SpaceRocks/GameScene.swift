@@ -7,6 +7,7 @@
 
 import SpriteKit
 import GameplayKit
+import QuartzCore
 
 private struct PhysicsCategory {
     static let none: UInt32      = 0
@@ -1316,6 +1317,31 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 // Slowly relax vertical velocity back toward 0 when no threats
                 let relax: CGFloat = 0.9
                 alienBody.velocity.dy *= relax
+
+                // Add gentle horizontal sway and occasional vertical drift for more randomness
+                // Horizontal sway: small sinusoidal component based on time
+                let t = CGFloat(CACurrentMediaTime())
+                let swayAmp: CGFloat = 20
+                let swayFreq: CGFloat = 0.6
+                let swayVX = swayAmp * sin(t * swayFreq)
+                alienBody.velocity.dx += swayVX * CGFloat(dt)
+                // Vertical drift target: occasionally pick a new target Y and blend toward it
+                if alien.userData == nil { alien.userData = NSMutableDictionary() }
+                let lastTargetTime = (alien.userData?["driftTS"] as? TimeInterval) ?? 0
+                let nextChange: TimeInterval = (alien.userData?["driftNext"] as? TimeInterval) ?? 0
+                let now = CACurrentMediaTime()
+                if now - lastTargetTime > nextChange {
+                    alien.userData?["driftTS"] = now
+                    alien.userData?["driftNext"] = TimeInterval(Double.random(in: 1.2...2.6))
+                    let newTarget = Double.random(in: Double(frame.minY + 60)...Double(frame.maxY - 60))
+                    alien.userData?["driftY"] = newTarget
+                }
+                if let targetY = alien.userData?["driftY"] as? Double {
+                    let dyToTarget = CGFloat(targetY) - alien.position.y
+                    let driftBlend: CGFloat = 0.6
+                    let desiredVY = clamp(dyToTarget, min: -90, max: 90)
+                    alienBody.velocity.dy = alienBody.velocity.dy * (1 - driftBlend) + desiredVY * driftBlend * CGFloat(dt)
+                }
             }
         }
 
@@ -1403,22 +1429,47 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             default: return (Int.random(in: 0..<10) < 2) ? .large : .small // 20% large, 80% small
             }
         }()
-        // Build saucer shape based on size
+        // Build saucer shape based on size: green body (red outline), black dots, clear dome
         let saucer = SKShapeNode()
         let baseSize = (size == .large) ? CGSize(width: 44, height: 16) : CGSize(width: 28, height: 10)
-        let base = SKShapeNode(ellipseOf: baseSize)
-        base.strokeColor = .white
-        base.lineWidth = 2
-        base.fillColor = .black
+        let body = SKShapeNode(ellipseOf: baseSize)
+        body.strokeColor = .red
+        body.lineWidth = 2
+        body.fillColor = NSColor(calibratedRed: 0.05, green: 0.6, blue: 0.1, alpha: 1.0)
+
+        saucer.addChild(body)
+
+        // Row of black dots aligned on a single horizontal line: 4 for large, 3 for small
+        let dotCount = (size == .large) ? 4 : 3
+        let usableWidth = baseSize.width * 0.6
+        let startX = -usableWidth * 0.5
+        // Align directly over the oval on the same horizontal axis
+        let yOffset: CGFloat = baseSize.height * 0.25
+        let dotRadius: CGFloat = (size == .large) ? 2.2 : 1.6
+        if dotCount > 1 {
+            let step = usableWidth / CGFloat(dotCount - 1)
+            for i in 0..<dotCount {
+                let x = startX + CGFloat(i) * step
+                let dot = SKShapeNode(circleOfRadius: dotRadius)
+                dot.fillColor = .black
+                dot.strokeColor = .clear
+                dot.position = CGPoint(x: x, y: yOffset)
+                saucer.addChild(dot)
+            }
+        }
+
+        // Clear dome over the body
         let domeRadius: CGFloat = (size == .large) ? 12 : 8
-        let domeYOffset: CGFloat = (size == .large) ? 5 : 4
+        let domeYOffset: CGFloat = (size == .large) ? 6 : 4
         let domePath = CGMutablePath()
-        domePath.addArc(center: CGPoint(x: 0, y: domeYOffset), radius: domeRadius, startAngle: .pi, endAngle: 0, clockwise: false)
+        // Changed arc to be flipped horizontally, from 0 to pi instead of pi to 0:
+        domePath.addArc(center: CGPoint(x: 0, y: domeYOffset), radius: domeRadius, startAngle: 0, endAngle: .pi, clockwise: false)
         let dome = SKShapeNode(path: domePath)
         dome.strokeColor = .white
         dome.lineWidth = 2
-        saucer.addChild(base)
+        dome.fillColor = NSColor(white: 1.0, alpha: 0.12)
         saucer.addChild(dome)
+        
         // Spawn from left or right edge
         let fromLeft = Bool.random()
         let y = CGFloat.random(in: frame.minY + 60 ... frame.maxY - 60)
