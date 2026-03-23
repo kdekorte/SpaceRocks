@@ -690,6 +690,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         clearGameObjects()
         soundManager.stopBackgroundMusic()
         
+        level = 0
+        
         gameOverLabel.text = "GAME OVER"
         gameOverLabel.fontSize = 44
         gameOverLabel.fontColor = .white
