@@ -13,10 +13,12 @@ class SoundManager {
     
     var thrustPlayer: AVAudioPlayer?
     var backgroundMusicPlayer: AVAudioPlayer?
+    var ufoPlayer: AVAudioPlayer?
     
     func preloadSounds() {
         preloadThrust()
         preloadBackgroundMusic()
+        preloadUFOSound()
     }
     
     func preloadThrust() {
@@ -31,6 +33,14 @@ class SoundManager {
             backgroundMusicPlayer = try? AVAudioPlayer(contentsOf: url)
             backgroundMusicPlayer?.prepareToPlay() 
         }
+    }
+    
+    func preloadUFOSound() {
+        if let url = Bundle.main.url(forResource: "ufo_whoo", withExtension: "caf") {
+            ufoPlayer = try? AVAudioPlayer(contentsOf: url)
+            ufoPlayer?.prepareToPlay()
+        }
+        
     }
     
     func startThrust() {
@@ -55,5 +65,14 @@ class SoundManager {
     func setBackgroundMusicSpeed(_ rate: Float) {
         backgroundMusicPlayer?.enableRate = true
         backgroundMusicPlayer?.rate = rate
+    }
+    
+    func startUFOSound() {
+        ufoPlayer?.numberOfLoops = -1
+        ufoPlayer?.play()
+    }
+    
+    func stopUFOSound() {
+        ufoPlayer?.stop()
     }
 }

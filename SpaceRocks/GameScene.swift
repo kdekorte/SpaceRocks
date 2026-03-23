@@ -13,6 +13,8 @@ private struct PhysicsCategory {
     static let ship: UInt32      = 0x1 << 0
     static let asteroid: UInt32  = 0x1 << 1
     static let bullet: UInt32    = 0x1 << 2
+    static let alien: UInt32     = 0x1 << 3
+    static let alienBullet: UInt32 = 0x1 << 4
 }
 
 class GameScene: SKScene, SKPhysicsContactDelegate {
@@ -35,6 +37,13 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
     private var isShipHit = false
     private var isShipInvulnerable = false
     private var shipInvulnerabilityTime: TimeInterval = 0
+
+    // Alien ship
+    private var alienShip: SKShapeNode?
+    private var alienSpawnTimer: TimeInterval = 0
+    private var alienFireTimer: TimeInterval = 0
+    private var isAlienAlive: Bool = false
+    private var isUFOSoundPlaying = false
 
     // Fire rate limiting
     private var fireCooldown: TimeInterval = 0.1 // 10 shots per second
@@ -626,6 +635,17 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         isShipHit = false
         soundManager.startBackgroundMusic()
         
+        alienShip?.removeFromParent()
+        alienShip = nil
+        isAlienAlive = false
+        alienSpawnTimer = 3.0
+        alienFireTimer = 0
+        
+        if isUFOSoundPlaying {
+            soundManager.stopUFOSound()
+            isUFOSoundPlaying = false
+        }
+
         createShip()
         startShipInvulnerability(duration: 0.5)
         spawnWave()
@@ -681,6 +701,15 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         bullets.forEach { $0.removeFromParent() }
         asteroids.removeAll()
         bullets.removeAll()
+        
+        alienShip?.removeFromParent()
+        alienShip = nil
+        isAlienAlive = false
+        
+        if isUFOSoundPlaying {
+            soundManager.stopUFOSound()
+            isUFOSoundPlaying = false
+        }
     }
 
     func didBegin(_ contact: SKPhysicsContact) {
@@ -694,6 +723,28 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
             if let bulletNode, let asteroidNode {
                 bulletHit(bullet: bulletNode, asteroid: asteroidNode)
             }
+        }
+
+        // Player bullet vs alien ship
+        if (a == PhysicsCategory.bullet && b == PhysicsCategory.alien) ||
+           (b == PhysicsCategory.bullet && a == PhysicsCategory.alien) {
+            let bulletNode = (a == PhysicsCategory.bullet ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode
+            let alienNode = (a == PhysicsCategory.alien ? contact.bodyA.node : contact.bodyB.node) as? SKShapeNode
+            if let bullet = bulletNode, let alien = alienNode {
+                bullet.removeFromParent()
+                bullets.removeAll { $0 == bullet }
+                destroyAlien(alien)
+            }
+        }
+
+        // Alien bullet vs player ship
+        if (a == PhysicsCategory.alienBullet && b == PhysicsCategory.ship) ||
+           (b == PhysicsCategory.alienBullet && a == PhysicsCategory.ship) {
+            if shieldActive || isShipInvulnerable { return }
+            shipHit()
+            // Remove alien bullet
+            let bulletNode = (a == PhysicsCategory.alienBullet ? contact.bodyA.node : contact.bodyB.node)
+            bulletNode?.removeFromParent()
         }
 
         if (a == PhysicsCategory.ship && b == PhysicsCategory.asteroid) ||
@@ -1083,6 +1134,8 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
                 updateShieldCooldownHUD()
             }
         }
+        
+        updateAlien(dt)
 
         // Rotate
         let turnSpeed: CGFloat = 3.0
@@ -1131,6 +1184,9 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         wrapNode(ship)
         for a in asteroids { wrapNode(a) }
         for b in bullets { wrapNode(b) }
+        if let alien = alienShip {
+            wrapNode(alien)
+        }
 
         // If no asteroids, new wave
         if asteroids.isEmpty {
@@ -1146,6 +1202,186 @@ class GameScene: SKScene, SKPhysicsContactDelegate {
         if p.y < frame.minY { p.y = frame.maxY }
         else if p.y > frame.maxY { p.y = frame.minY }
         node.position = p
+    }
+    
+    
+    // MARK: - Alien ship methods
+
+    private enum AlienSize: String { case large, small }
+
+    private func createAlienShip() {
+        guard !isAlienAlive else { return }
+        isAlienAlive = true
+        // Decide saucer size based on level
+        let size: AlienSize = {
+            switch level {
+            case 0...2: return .large
+            case 3...4: return Bool.random() ? .large : .small
+            default: return (Int.random(in: 0..<10) < 2) ? .large : .small // 20% large, 80% small
+            }
+        }()
+        // Build saucer shape based on size
+        let saucer = SKShapeNode()
+        let baseSize = (size == .large) ? CGSize(width: 44, height: 16) : CGSize(width: 28, height: 10)
+        let base = SKShapeNode(ellipseOf: baseSize)
+        base.strokeColor = .white
+        base.lineWidth = 2
+        base.fillColor = .black
+        let domeRadius: CGFloat = (size == .large) ? 12 : 8
+        let domeYOffset: CGFloat = (size == .large) ? 5 : 4
+        let domePath = CGMutablePath()
+        domePath.addArc(center: CGPoint(x: 0, y: domeYOffset), radius: domeRadius, startAngle: .pi, endAngle: 0, clockwise: false)
+        let dome = SKShapeNode(path: domePath)
+        dome.strokeColor = .white
+        dome.lineWidth = 2
+        saucer.addChild(base)
+        saucer.addChild(dome)
+        // Spawn from left or right edge
+        let fromLeft = Bool.random()
+        let y = CGFloat.random(in: frame.minY + 60 ... frame.maxY - 60)
+        saucer.position = CGPoint(x: fromLeft ? frame.minX - 30 : frame.maxX + 30, y: y)
+        saucer.zPosition = 0
+        saucer.name = "alien"
+        saucer.physicsBody = SKPhysicsBody(circleOfRadius: max(baseSize.width, baseSize.height) * 0.5)
+        saucer.physicsBody?.isDynamic = true
+        saucer.physicsBody?.affectedByGravity = false
+        saucer.physicsBody?.linearDamping = 0
+        saucer.physicsBody!.categoryBitMask = PhysicsCategory.alien
+        saucer.physicsBody!.contactTestBitMask = PhysicsCategory.bullet | PhysicsCategory.ship
+        saucer.physicsBody!.collisionBitMask = PhysicsCategory.none
+        // Tag size in userData
+        let data = saucer.userData ?? NSMutableDictionary()
+        data["size"] = size.rawValue
+        saucer.userData = data
+        addChild(saucer)
+        alienShip = saucer
+        // Set horizontal velocity across the screen (small is faster)
+        let baseSpeed: CGFloat = (size == .large) ? 80 : 120
+        let speed = baseSpeed + CGFloat(level) * ((size == .large) ? 10.0 : 12.0)
+        saucer.physicsBody?.velocity = CGVector(dx: fromLeft ? speed : -speed, dy: 0)
+        // Schedule firing soon after spawn (small fires slightly more often)
+        alienFireTimer = (size == .large) ? 1.0 : 0.7
+
+        if !isUFOSoundPlaying {
+            soundManager.startUFOSound()
+            isUFOSoundPlaying = true
+        }
+    }
+
+    private func updateAlien(_ dt: TimeInterval) {
+        // Spawn timing
+        if !isAlienAlive {
+            alienSpawnTimer -= dt
+            if alienSpawnTimer <= 0 {
+                createAlienShip()
+                // Next spawn sometime later
+                alienSpawnTimer = 12.0 + Double.random(in: -3...3)
+            }
+            return
+        }
+        guard let alien = alienShip else { return }
+        // Wrap horizontally like other nodes
+        wrapNode(alien)
+
+        // If alien moved off beyond a margin, consider it gone
+        let margin: CGFloat = 40
+        if alien.position.x < frame.minX - margin || alien.position.x > frame.maxX + margin {
+            alien.removeFromParent()
+            alienShip = nil
+            isAlienAlive = false
+            if isUFOSoundPlaying {
+                soundManager.stopUFOSound()
+                isUFOSoundPlaying = false
+            }
+            return
+        }
+
+        // Fire toward player periodically
+        alienFireTimer -= dt
+        if alienFireTimer <= 0 {
+            fireAlienBullet()
+            alienFireTimer = 1.6 + Double.random(in: -0.5...0.5)
+        }
+        // Small jittery vertical movement
+        let dy = CGFloat.random(in: -20...20)
+        alien.position.y = clamp(alien.position.y + dy * CGFloat(dt), min: frame.minY + 40, max: frame.maxY - 40)
+    }
+
+    private func fireAlienBullet() {
+        guard state == .playing, let alien = alienShip, let ship = ship, isAlienAlive else { return }
+        let bullet = SKShapeNode(circleOfRadius: 2)
+        bullet.fillColor = .white
+        bullet.strokeColor = .red
+        bullet.position = alien.position
+        bullet.zPosition = -1
+        bullet.name = "alienBullet"
+        bullet.physicsBody = SKPhysicsBody(circleOfRadius: 2)
+        bullet.physicsBody?.isDynamic = true
+        bullet.physicsBody?.affectedByGravity = false
+        bullet.physicsBody?.linearDamping = 0
+        bullet.physicsBody?.categoryBitMask = PhysicsCategory.alienBullet
+        bullet.physicsBody?.contactTestBitMask = PhysicsCategory.ship
+        bullet.physicsBody?.collisionBitMask = PhysicsCategory.none
+        addChild(bullet)
+        // Aim toward the player's ship with slight inaccuracy
+        let toShip = CGVector(dx: ship.position.x - alien.position.x, dy: ship.position.y - alien.position.y)
+        let len = max(0.001, sqrt(toShip.dx*toShip.dx + toShip.dy*toShip.dy))
+        var dir = CGVector(dx: toShip.dx/len, dy: toShip.dy/len)
+        // Accuracy depends on saucer size and level: small is more accurate, higher levels reduce spread
+        let saucerSize: AlienSize = {
+            if let raw = alienShip?.userData?["size"] as? String, let s = AlienSize(rawValue: raw) { return s }
+            return .large
+        }()
+        let baseSpread: CGFloat = (saucerSize == .large) ? 0.25 : 0.12
+        let levelTighten = CGFloat(min(max(level, 0), 10)) * 0.01 // tighten by up to 0.10
+        let spread: CGFloat = max(0.02, baseSpread - levelTighten)
+        // Add a small random spread
+        dir.dx += CGFloat.random(in: -spread...spread)
+        dir.dy += CGFloat.random(in: -spread...spread)
+        let dirLen = max(0.001, sqrt(dir.dx*dir.dx + dir.dy*dir.dy))
+        dir.dx /= dirLen; dir.dy /= dirLen
+        let speed: CGFloat = 220
+        bullet.physicsBody?.velocity = CGVector(dx: dir.dx * speed, dy: dir.dy * speed)
+        // Lifetime
+        bullet.run(.sequence([.wait(forDuration: 2.0), .removeFromParent()]))
+    }
+    
+    private func destroyAlien(_ node: SKShapeNode) {
+        guard isAlienAlive else { return }
+        isAlienAlive = false
+        // Simple pop/explosion
+        let explosion = SKEmitterNode()
+        explosion.particleTexture = nil
+        explosion.particleBirthRate = 0
+        explosion.numParticlesToEmit = 60
+        explosion.particleLifetime = 0.5
+        explosion.particleLifetimeRange = 0.2
+        explosion.particleSpeed = 200
+        explosion.particleSpeedRange = 60
+        explosion.emissionAngleRange = .pi * 2
+        explosion.particleAlpha = 1.0
+        explosion.particleAlphaSpeed = -1.8
+        explosion.particleScale = 0.6
+        explosion.particleScaleRange = 0.3
+        explosion.particleColor = .white
+        explosion.particleColorBlendFactor = 1.0
+        explosion.position = node.position
+        addChild(explosion)
+        explosion.run(.sequence([.wait(forDuration: 0.5), .removeFromParent()]))
+        node.removeFromParent()
+        alienShip = nil
+        
+        if isUFOSoundPlaying {
+            soundManager.stopUFOSound()
+            isUFOSoundPlaying = false
+        }
+        
+        // Award points: large = 100, small = 200
+        if let raw = node.userData?["size"] as? String, let s = AlienSize(rawValue: raw) {
+            score += (s == .large) ? 100 : 200
+        } else {
+            score += 200
+        }
     }
 }
 

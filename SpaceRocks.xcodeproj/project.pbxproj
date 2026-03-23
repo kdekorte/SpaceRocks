@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		5980B31B2F719A98002CC464 /* ufo_whoo.caf in Resources */ = {isa = PBXBuildFile; fileRef = 5980B31A2F719A98002CC464 /* ufo_whoo.caf */; };
 		59B62DD32F6B5E400058AC86 /* explode.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DCE2F6B5E400058AC86 /* explode.caf */; };
 		59B62DD42F6B5E400058AC86 /* fire.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DCF2F6B5E400058AC86 /* fire.caf */; };
 		59B62DD52F6B5E400058AC86 /* shield_off.caf in Resources */ = {isa = PBXBuildFile; fileRef = 59B62DD02F6B5E400058AC86 /* shield_off.caf */; };
@@ -33,6 +34,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		5980B31A2F719A98002CC464 /* ufo_whoo.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = ufo_whoo.caf; sourceTree = "<group>"; };
 		59B62DCE2F6B5E400058AC86 /* explode.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = explode.caf; sourceTree = "<group>"; };
 		59B62DCF2F6B5E400058AC86 /* fire.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = fire.caf; sourceTree = "<group>"; };
 		59B62DD02F6B5E400058AC86 /* shield_off.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = shield_off.caf; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 				59B62DD02F6B5E400058AC86 /* shield_off.caf */,
 				59B62DD12F6B5E400058AC86 /* shield_on.caf */,
 				59B62DD22F6B5E400058AC86 /* thrust.caf */,
+				5980B31A2F719A98002CC464 /* ufo_whoo.caf */,
 			);
 			path = Sounds;
 			sourceTree = "<group>";
@@ -244,6 +247,7 @@
 				59B62DD32F6B5E400058AC86 /* explode.caf in Resources */,
 				59B62DE72F6C36D10058AC86 /* bg_heartbeat.caf in Resources */,
 				59B62DD42F6B5E400058AC86 /* fire.caf in Resources */,
+				5980B31B2F719A98002CC464 /* ufo_whoo.caf in Resources */,
 				59B62DD52F6B5E400058AC86 /* shield_off.caf in Resources */,
 				59B62DD62F6B5E400058AC86 /* shield_on.caf in Resources */,
 				59B62DD72F6B5E400058AC86 /* thrust.caf in Resources */,
