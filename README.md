@@ -20,8 +20,11 @@ SpaceRocks is a classic arcade-style asteroid shooter for macOS, written in Swif
 You can install the latest release of SpaceRocks using Homebrew:
 
 ```sh
-brew tap kdekorte/spacerocks
+brew tap kdekorte/SpaceRocks https://github.com/kdekorte/SpaceRocks.git
+brew trust kdekorte/SpaceRocks
 brew install --cask spacerocks
+
+Note: You will need to open Settings -> Privacy & Security and allow the application to open
 ```
 
 ## Building a Release
